@@ -18,10 +18,10 @@ def token_required(f):
             token = request.headers['x-access-tokens']
 
         if not token:
-            return jsonify({'message': 'a valid token is missing'}), 404
+            return jsonify({'message': 'you are not logged in, or ' +
+                                       'a valid token is missing'}), 404
         try:
             data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-            # current_user = Users.query.filter_by(public_id=data['public_id']).first()
             current_user = Users.query.filter_by(username=data['username']).first()
         except:
             return jsonify({'message': 'token is invalid'}), 406
@@ -131,22 +131,27 @@ def login_user():
 
     user = Users.query.filter_by(username=auth.username).first()  
     if not user:
-        return jsonify({'message': 'user or password is invalid', 'token': ''}), 404
+        return jsonify({'message': 'user or password is invalid', 'token': '', 'userid':-1}), 404
 
     if check_password_hash(user.password, auth.password):
-        token = jwt.encode({'username' : user.username, 'exp' : datetime.datetime.utcnow() +
-                            datetime.timedelta(minutes=45)}, SECRET_KEY, "HS256")
+        token = jwt.encode({
+                                'username' : user.username,
+                                'exp' : datetime.datetime.utcnow() +
+                                    datetime.timedelta(minutes=45)
+                           },
+                            SECRET_KEY, "HS256")
 
-        return jsonify({'token' : token})
+        return jsonify({'token' : token, 'userid' : user.id})
 
-    return jsonify({'message':'user or password is invalid', 'token': ''}), 404 
+    return jsonify({'message':'user or password is invalid', 'token': '', 'userid': -1}), 404 
     # make_response({'message':'user is invalid', 'token':''},  404)
     #    return make_response('could not verify',  401, {'Authentication': '"login required"'})
 
 
 
-@bp.route('/users', methods=['GET'])
-def get_all_users(): 
+@bp.route('/user', methods=['GET'])
+@token_required
+def get_all_users(current_user): 
     """View all users.
     Returns a dictionary containing every user.
     ---
@@ -159,13 +164,25 @@ def get_all_users():
     result = []  
     for user in users:  
         user_data = {}  
-        user_data['id'] = user.id
         user_data['username'] = user.username
         user_data['email'] = user.email
-        user_data['password'] = user.password
         
         result.append(user_data)  
-    return jsonify({'users': result})
+    return jsonify(result)
+
+@bp.route('/user/<user_id>', methods=['GET'])
+@token_required
+def get_user(current_user, user_id): 
+    user = Users.query.filter_by(id=user_id).first()
+    if not user:
+        return jsonify({"message" : f"user {user_id} not found."}), 404
+
+    res = {}
+    res['name'] = user.username
+    res['email'] = user.email
+
+    return jsonify(res)
+
 
 def generate_invite_code():
     alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -173,6 +190,135 @@ def generate_invite_code():
     for _ in range(6):
         code += alphabet[randint(0, 51)]
     return code 
+
+
+# Returns parties hosted by user associated with TOKEN
+@bp.route('/party/host', methods=['GET'])
+@token_required
+def get_parties(current_user):
+    parties = Parties.query.filter_by(host=current_user.username).all()
+    output = []
+    for party in parties:
+        party_data = {}
+        party_data['name'] = party.name
+        party_data['description'] = party.description
+        party_data['date'] = party.date
+        party_data['host'] = party.host
+        party_data['publicity'] = party.publicity
+        party_data['inviteCode'] = party.invite_code
+        if party.publicity == "open_with_blacklist":
+            blacklist = []
+            bl_lookup = Blacklist.query.filter_by(party_name=party.name).all()
+            for entry in bl_lookup:
+                blacklist.append(entry.username)
+            party_data['blacklist'] = blacklist
+        else:
+            whitelist = []
+            wl_lookup = Whitelist.query.filter_by(party_name=party.name).all()
+            for entry in wl_lookup:
+                whitelist.append(entry.username)
+            party_data['whitelist'] = whitelist
+        output.append(party_data)
+
+    return jsonify(output)
+
+# Returns parties that user associated with TOKEN is joined to
+@bp.route('/party/guest', methods=['GET'])
+@token_required
+def get_guests(current_user):  
+    party_names = []
+    guest_in = Guestlist.query.filter_by(username=current_user.username).all()
+    if not guest_in:
+        return jsonify([])
+    for entry in guest_in:
+        party_names.append(entry.party_name)
+    
+    print(party_names)
+    output = []
+    for party_name in party_names:
+        party = Parties.query.filter_by(name=party_name).first()
+        party_data = {}
+        party_data['name'] = party.name
+        party_data['host'] = party.host
+        party_data['description'] = party.description
+        party_data['date'] = party.date
+        party_data['inviteCode'] = party.invite_code
+        output.append(party_data)
+
+    return jsonify(output)
+
+@bp.route('/party/guest/join', methods=["POST"])
+@token_required
+def join_party(current_user):
+    data = request.get_json()
+    if not data:
+        return jsonify({'message': 'no payload received'})
+
+    required = 'invite_code'
+    if required not in data:
+        return jsonify({'message':'no invite code supplied'}), 400
+    
+    # Check for party associated with invite code
+    code = data['invite_code']
+    party = Parties.query.filter_by(invite_code=code).first()
+    if not party:
+        return jsonify({"message":"Party doesn't exist"}), 404
+
+    # Check permissions
+    if (party.publicity == "open_with_blacklist"):
+        bl_check = Blacklist.query.filter_by(party_name=party.name,
+                                             username=current_user.username).first()
+        if bl_check:
+            return jsonify({"message":"user on blacklist"}), 403
+    else:
+        wl_check = Whitelist.query.filter_by(party_name=party.name,
+                                             username=current_user.username).first()
+        if not wl_check:
+            return jsonify({"message":"user not on whitelist (this party is private)"}), 403
+
+    # Check if user is already on guestlist
+    new_guest = Guestlist.query.filter_by(party_name=party.name,
+                                          username=current_user.username).first()
+    if new_guest:
+        return jsonify({"message":f"{current_user.username} is already in {party.name}"}), 401
+
+    # Check if user is the host
+    if current_user.username == party.host:
+        return jsonify({"message": f"{current_user.username} is already apart of {party.name}"}), 401
+
+    new_guest = Guestlist(party_name=party.name,
+                           username=current_user.username)
+    db.session.add(new_guest)
+    db.session.commit()
+    return jsonify({"message":f"added {current_user.username} to {party.name}"})
+
+
+@bp.route('/party/guest/leave', methods=["POST"])
+@token_required
+def leave_party(current_user):
+    data = request.get_json()
+    if not data:
+        return jsonify({'message': 'no payload received'})
+
+    required = 'party_name'
+    if required not in data:
+        return jsonify({'message':'no party name supplied'}), 400
+    
+    # Check for guestlist entry associated with this user and the desired party
+    party_name = data['party_name']
+    entry = Guestlist.query.filter_by(party_name=party_name, username=current_user.username).first()
+    if not entry:
+        return jsonify({"message" : f"User not found in {party_name}"}), 404
+
+    # Check if user is the host
+    host = Parties.query.filter_by(name=party_name).first().host
+    if current_user.username == host:
+        return jsonify({"message": f"{current_user.username} is host of {entry.party_name}"}), 401
+
+    db.session.delete(entry)
+    db.session.commit()
+    return jsonify({"message":f"removed {current_user.username} from {entry.party_name}"})
+
 
 # create new party
 @bp.route('/party/create', methods=['POST'])
@@ -214,13 +360,12 @@ def create_party(current_user):
       404:
         description: No token found. Invalid resource access.
     """
-
-    if (current_user == None):
-        return jsonify({'message': 'You are not logged in. Invalid resource access.'}), 406
+    # if (current_user == None):
+    #     return jsonify({'message': 'You are not logged in. Invalid resource access.'}), 406
  
     data = request.get_json()
 
-    required = ['name', 'description', 'date']
+    required = ['name', 'description', 'date', 'publicity']
     for word in required:
         if word not in data:
             return jsonify({'message': 'Invalid payload received'}), 401
@@ -231,10 +376,11 @@ def create_party(current_user):
     #  whitelist_only
     #
     # Defaults to open_with_blacklist
-    if "publicity" not in data:
-        publicity = "open_with_blacklist"
-    else:
-        publicity = data['publicity']
+    # if "publicity" not in data:
+    #     publicity = "open_with_blacklist"
+    #     data['blacklist'] = []
+    # else:
+    #     publicity = data['publicity']
 
     # check for existing party name
     party_exists = Parties.query.filter_by(name=data['name']).all()
@@ -255,7 +401,7 @@ def create_party(current_user):
                             description=data['description'],
                             date=data['date'],
                             host=current_user.username,
-                            publicity=publicity,
+                            publicity=data['publicity'],
                             invite_code=code)           
     try:
         db.session.add(new_party)  
@@ -264,7 +410,7 @@ def create_party(current_user):
         return jsonify({'message': 'SQL Integrity Error'}), 406
 
     # If the party is white list only, add all users to its white list
-    if publicity == "whitelist_only" and "whitelist" in data:
+    if data['publicity'] == "whitelist_only" and "whitelist" in data:
         whitelist = data['whitelist']
         for name in whitelist:
             new_guest = Whitelist(party_name=new_party.name,
@@ -276,64 +422,14 @@ def create_party(current_user):
             banned_guest = Blacklist(party_name=new_party.name,
                                      username=name)
             db.session.add(banned_guest)
+
+    # Add host to their own guestlist
+    # host = Guestlist(party_name=new_party.name,
+    #                        username=current_user.username)
+    # db.session.add(host)
         
     db.session.commit()
     return jsonify({'message' : 'new party created'})
-
-
-# Returns parties hosted by user associated with TOKEN
-@bp.route('/party/host', methods=['GET'])
-@token_required
-def get_parties(current_user):
-    if (current_user == None):
-        return jsonify({'message': 'You are not logged in. Invalid resource access.'}), 406
-
-    parties = Parties.query.filter_by(host=current_user.username).all()
-    output = []
-    for party in parties:
-        party_data = {}
-        party_data['name'] = party.name
-        party_data['description'] = party.description
-        party_data['date'] = party.date
-        party_data['publicity'] = party.publicity
-        
-        if party.publicity == "whitelist":
-            whitelist = []
-            guests = Whitelist.query.filter_by(party_name=party.name).all()
-            for guest in guests:
-                whitelist.append(guest.username)
-
-            party_data['whitelist'] = whitelist
-        output.append(party_data)
-
-    return jsonify(output)
-
-# Returns parties that user associated with TOKEN is joined to
-@bp.route('/party/guest', methods=['GET'])
-@token_required
-def get_guests(current_user):
-    if (current_user == None):
-        return jsonify({'message': 'You are not logged in. Invalid resource access.'}), 406
-
-    party_names = []
-    guest_in = Guestlist.query.filter_by(username=current_user.username).all()
-    if not guest_in:
-        return jsonify([]), 404
-    for entry in guest_in:
-        party_names.append(entry.party_name)
-    
-    print(party_names)
-    output = []
-    for party_name in party_names:
-        party = Parties.query.filter_by(name=party_name).first()
-        party_data = {}
-        party_data['name'] = party.name
-        party_data['host'] = party.host
-        party_data['description'] = party.description
-        party_data['date'] = party.date
-        output.append(party_data)
-
-    return jsonify(output)
 
 
 @bp.route('/party/delete', methods=['DELETE'])
@@ -347,7 +443,7 @@ def delete_party(current_user):
     
     required = 'name'
     if required not in data:
-        return jsonify({'message':'no name supplied for deletion'}), 402
+        return jsonify({'message':'no name supplied for deletion'}), 400
 
     party = Parties.query.filter_by(name=data['name'], host=current_user.username).first()  
     if not party:  
