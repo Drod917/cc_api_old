@@ -218,6 +218,13 @@ def get_parties(current_user):
             for entry in wl_lookup:
                 whitelist.append(entry.username)
             party_data['whitelist'] = whitelist
+
+        guestlist = []
+        gl_lookup = Guestlist.query.filter_by(party_name=party.name).all()
+        for entry in gl_lookup:
+            guestlist.append(entry.username)
+        party_data['guestlist'] = guestlist
+
         output.append(party_data)
 
     return jsonify(output)
