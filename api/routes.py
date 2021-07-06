@@ -185,7 +185,7 @@ def get_user(current_user, user_id):
 
 
 def generate_invite_code():
-    alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    alphabet = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNOPQRSTUVWXYZ'
     code = ''
     for _ in range(6):
         code += alphabet[randint(0, 51)]
