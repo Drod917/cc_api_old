@@ -212,12 +212,14 @@ def get_parties(current_user):
             for entry in bl_lookup:
                 blacklist.append(entry.username)
             party_data['blacklist'] = blacklist
+            party_data['whitelist'] = []
         else:
             whitelist = []
             wl_lookup = Whitelist.query.filter_by(party_name=party.name).all()
             for entry in wl_lookup:
                 whitelist.append(entry.username)
             party_data['whitelist'] = whitelist
+            party_data['blacklist'] = []
 
         guestlist = []
         gl_lookup = Guestlist.query.filter_by(party_name=party.name).all()
@@ -246,10 +248,32 @@ def get_guests(current_user):
         party = Parties.query.filter_by(name=party_name).first()
         party_data = {}
         party_data['name'] = party.name
-        party_data['host'] = party.host
         party_data['description'] = party.description
         party_data['date'] = party.date
+        party_data['host'] = party.host
+        party_data['publicity'] = party.publicity
         party_data['inviteCode'] = party.invite_code
+        if party.publicity == "open_with_blacklist":
+            blacklist = []
+            bl_lookup = Blacklist.query.filter_by(party_name=party.name).all()
+            for entry in bl_lookup:
+                blacklist.append(entry.username)
+            party_data['blacklist'] = blacklist
+            party_data['whitelist'] = []
+        else:
+            whitelist = []
+            wl_lookup = Whitelist.query.filter_by(party_name=party.name).all()
+            for entry in wl_lookup:
+                whitelist.append(entry.username)
+            party_data['whitelist'] = whitelist
+            party_data['blacklist'] = []
+
+        guestlist = []
+        gl_lookup = Guestlist.query.filter_by(party_name=party.name).all()
+        for entry in gl_lookup:
+            guestlist.append(entry.username)
+        party_data['guestlist'] = guestlist
+
         output.append(party_data)
 
     return jsonify(output)
