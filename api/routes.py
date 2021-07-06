@@ -188,7 +188,7 @@ def generate_invite_code():
     alphabet = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNOPQRSTUVWXYZ'
     code = ''
     for _ in range(6):
-        code += alphabet[randint(0, 51)]
+        code += alphabet[randint(0, len(alphabet) - 1)]
     return code 
 
 
