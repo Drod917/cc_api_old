@@ -183,7 +183,7 @@ def get_user(current_user, user_id):
 
     return jsonify(res)
 
-
+# Generates invite codes
 def generate_invite_code():
     alphabet = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNOPQRSTUVWXYZ'
     code = ''
@@ -278,6 +278,7 @@ def get_guests(current_user):
 
     return jsonify(output)
 
+# join a party
 @bp.route('/party/guest/join', methods=["POST"])
 @token_required
 def join_party(current_user):
@@ -323,7 +324,7 @@ def join_party(current_user):
     db.session.commit()
     return jsonify({"message":f"added {current_user.username} to {party.name}"})
 
-
+# leave a party
 @bp.route('/party/guest/leave', methods=["POST"])
 @token_required
 def leave_party(current_user):
@@ -462,7 +463,7 @@ def create_party(current_user):
     db.session.commit()
     return jsonify({'message' : 'new party created'})
 
-
+# delete a party
 @bp.route('/party/delete', methods=['DELETE'])
 @token_required
 def delete_party(current_user): 
